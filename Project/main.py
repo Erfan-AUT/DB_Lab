@@ -2,13 +2,12 @@ import redis
 import uuid
 from datetime import datetime
 import matplotlib.pyplot as plt
-from redis.client import sort_return_tuples
 
 r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
 
 
 def increment_count(r, start_str):
-    day_str = start_str + ":" + datetime.today().strftime('%Y-%m-%d')
+    day_str = start_str + ":" + datetime.today().strftime('%Y-%m-%d-%H-%M')
     if r.exists(day_str):
         day_count = int(r.get(day_str)) + 1
         r.set(day_str, day_count)
@@ -23,7 +22,9 @@ def extract_graph_data(r, day_str):
     return days, days_values
 
 
-def plot_graph(days, days_values):
+def plot_graph(days, days_values, title):
+    fig = plt.gcf()
+    fig.canvas.manager.set_window_title(title)
     x_range = list(range(len(days)))
     plt.bar(x_range, days_values)
     plt.xticks(x_range, days)
@@ -45,20 +46,17 @@ def main():
         print("Enter exit to exit")
         ipt = input()
         if ipt == "1":
+            short = ""
             og = "url:" + input("Enter long url \n")
             if r.exists(og):
                 short = r.hget(og, "short")
-                refs = int(r.hget(og, "refs")) + 1
-                r.hset(og, mapping={"short": short, "refs": refs})
-                # refs = r.hmget(og, {"short": short, "refs": refs})
-                print(short)
             else:
                 short = uuid.uuid4().hex[:6].lower()
                 r.hset(og, mapping={"short": short, "refs": 0})
                 r.expire(og, exp_time)
-                print(short)
                 # Update day count
                 increment_count(r, new_day)
+            print(short)
 
         elif ipt == "2":
             shrt = input("Enter short url \n")
@@ -70,6 +68,11 @@ def main():
                     found = True
                     print(key[4:])
                     increment_count(r, decode_day)
+
+                    refs = int(r.hget(key, "refs")) + 1
+                    r.expire(key, exp_time)
+                    r.hset(key, mapping={"short": shrt, "refs": refs})
+
                     break
 
             if not found:
@@ -85,14 +88,17 @@ def main():
                 days_decode, days_decode_values = extract_graph_data(
                     r, decode_day)
 
-                plot_graph(days_new, days_new_values)
-                plot_graph(days_decode, days_decode_values)
+                plot_graph(days_new, days_new_values,
+                           "New shortened links/day")
+                plot_graph(days_decode, days_decode_values,
+                           "Decoded links/day")
 
             elif ipt_2 == "2":
                 urls = r.keys("url:*")
                 urls_redis = [{"site": k[4:]} | r.hgetall(k) for k in urls]
                 urls_sorted = sorted(urls_redis, key=lambda k: k["refs"])[:3]
                 print(urls_sorted)
+
             elif ipt_2 == "3":
                 urls = r.keys("url:*")
                 urls_redis = [{"site": k[4:], "ttl": r.ttl(
